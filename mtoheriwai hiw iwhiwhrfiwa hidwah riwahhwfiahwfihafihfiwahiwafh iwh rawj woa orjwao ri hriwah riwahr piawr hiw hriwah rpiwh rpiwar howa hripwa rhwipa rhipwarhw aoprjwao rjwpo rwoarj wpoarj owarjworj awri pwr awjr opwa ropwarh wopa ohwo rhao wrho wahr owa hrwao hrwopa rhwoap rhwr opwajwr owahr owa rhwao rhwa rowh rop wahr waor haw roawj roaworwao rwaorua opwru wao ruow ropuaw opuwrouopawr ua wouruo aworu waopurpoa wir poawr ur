@@ -2458,9 +2458,10 @@ function getActiveMoveSpeed()
 end
 
 function getSpeedModeName()
-    if useVenixCarryEngine and VapserVenixCarry and VapserVenixCarry.isAutoCarryActive and VapserVenixCarry:isAutoCarryActive() then return "AUTO CARRY" end
+    -- User mode takes priority so brainrot steal does not flip the label
     if laggerToggled or laggerCarryToggled then return "LAGGER"
     elseif speedMode then return "CARRY"
+    elseif useVenixCarryEngine and VapserVenixCarry and VapserVenixCarry.isAutoCarryActive and VapserVenixCarry:isAutoCarryActive() then return "AUTO CARRY"
     else return "NORMAL" end
 end
 
@@ -2568,9 +2569,7 @@ end
                 if self._state and (self._state.autoLeftEnabled or self._state.autoRightEnabled) then
                     return self.normalSpeed
                 end
-                if self:isAutoCarryActive() then
-                    return self.autoCarrySpeed
-                end
+                -- User-selected modes always win; auto-carry must not override Lagger/Carry
                 if self.laggerMode == 1 then
                     return self.laggerSpeed
                 end
@@ -2580,13 +2579,13 @@ end
                 if self.speedToggled then
                     return self.carrySpeed
                 end
+                if self:isAutoCarryActive() then
+                    return self.autoCarrySpeed
+                end
                 return self.normalSpeed
             end,
             getStatus = function(self)
                 if not (self._state and (self._state.autoLeftEnabled or self._state.autoRightEnabled)) then
-                    if self:isAutoCarryActive() then
-                        return "AUTO CARRY", self.autoCarrySpeed
-                    end
                     if self.laggerMode == 1 then
                         return "LAGGER", self.laggerSpeed
                     end
@@ -2595,6 +2594,9 @@ end
                     end
                     if self.speedToggled then
                         return "CARRY", self.carrySpeed
+                    end
+                    if self:isAutoCarryActive() then
+                        return "AUTO CARRY", self.autoCarrySpeed
                     end
                     return "NORMAL", self.normalSpeed
                 end
@@ -2808,9 +2810,14 @@ end
                     or state == Enum.HumanoidStateType.FallingDown
                 local stealingAttr = LP:GetAttribute("Stealing") == true
                 local carrying = isCarryingBrainrot(character)
+                -- Keep Lagger / Carry mode intact while stealing brainrot
+                local userModeLocked = (self.laggerMode ~= 0) or self.speedToggled
+                    or laggerToggled or laggerCarryToggled or speedMode
                 if stealingAttr and not self._autoCarryStealLatch then
                     self._autoCarryStealLatch = true
-                    self:beginAutoCarry()
+                    if not userModeLocked then
+                        self:beginAutoCarry()
+                    end
                 elseif not stealingAttr then
                     self._autoCarryStealLatch = false
                 end
@@ -2818,11 +2825,11 @@ end
                     if ragdolled or _tick() > (self._carryPickupWatchUntil or 0) then
                         self._waitingForCarryPickup = false
                         self._carryPickupWatchUntil = 0
-                    elseif carrying then
+                    elseif carrying and not userModeLocked then
                         self:beginAutoCarry()
                     end
                 end
-                if carrying and not self._autoCarryFromSteal then
+                if carrying and not self._autoCarryFromSteal and not userModeLocked then
                     self:beginAutoCarry()
                 end
                 if self._autoCarryFromSteal then
@@ -8754,15 +8761,40 @@ function buildGui()
     local speedPage = contentPages["Speed"]
 
     mkSect(speedPage, "Movement Speeds")
-    do local row = mkRow(speedPage, 42); mkLabel(row, "Normal Speed"); normalBox = mkBox(row, NS, 50, 56, function(v) if v == v and v > 0 and v < math.huge then NS = v; if _G.__VapserApplySpeedNow then pcall(_G.__VapserApplySpeedNow) end end end) end
+    do local row = mkRow(speedPage, 42); mkLabel(row, "Normal Speed"); normalBox = mkBox(row, NS, 50, 56, function(v)
+        if v == v and v > 0 and v < math.huge then
+            NS = v
+            if VapserVenixCarry and VapserVenixCarry.setNormalSpeed then pcall(VapserVenixCarry.setNormalSpeed, VapserVenixCarry, v) end
+            if _G.__VapserApplySpeedNow then pcall(_G.__VapserApplySpeedNow) end
+        end
+    end) end
     do
         local row = mkRow(speedPage, 42); mkLabel(row, "Carry Speed")
-        VapserUI.carrySpeedBox = mkBox(row, VapserVenixCarry.autoCarrySpeed, 50, 56, function(v)
-            VapserVenixCarry:setAutoCarrySpeed(v); VapserUI.carrySpeedBox.Text = tostring(VapserVenixCarry.autoCarrySpeed)
+        VapserUI.carrySpeedBox = mkBox(row, CS, 50, 56, function(v)
+            if v == v and v > 0 and v < math.huge then
+                CS = v
+                if VapserVenixCarry and VapserVenixCarry.setCarrySpeed then pcall(VapserVenixCarry.setCarrySpeed, VapserVenixCarry, v) end
+                -- Keep auto-carry boost in sync so steal still uses the same carry speed user set
+                if VapserVenixCarry and VapserVenixCarry.setAutoCarrySpeed then pcall(VapserVenixCarry.setAutoCarrySpeed, VapserVenixCarry, v) end
+                VapserUI.carrySpeedBox.Text = tostring(CS)
+                if _G.__VapserApplySpeedNow then pcall(_G.__VapserApplySpeedNow) end
+            end
         end)
     end
-    do local row = mkRow(speedPage, 42); mkLabel(row, "Lagger Normal Speed"); laggerBox = mkBox(row, LAGGER_SPEED, 50, 56, function(v) if v == v and v > 0 and v < math.huge then LAGGER_SPEED = v; if _G.__VapserApplySpeedNow then pcall(_G.__VapserApplySpeedNow) end end end) end
-    do local row = mkRow(speedPage, 42); mkLabel(row, "Lagger Carry Speed"); lagger2Box = mkBox(row, LAGGER_CARRY_SPEED, 50, 56, function(v) if v == v and v > 0 and v < math.huge then LAGGER_CARRY_SPEED = v; if _G.__VapserApplySpeedNow then pcall(_G.__VapserApplySpeedNow) end end end) end
+    do local row = mkRow(speedPage, 42); mkLabel(row, "Lagger Normal Speed"); laggerBox = mkBox(row, LAGGER_SPEED, 50, 56, function(v)
+        if v == v and v > 0 and v < math.huge then
+            LAGGER_SPEED = v
+            if VapserVenixCarry and VapserVenixCarry.setLaggerSpeed then pcall(VapserVenixCarry.setLaggerSpeed, VapserVenixCarry, v) end
+            if _G.__VapserApplySpeedNow then pcall(_G.__VapserApplySpeedNow) end
+        end
+    end) end
+    do local row = mkRow(speedPage, 42); mkLabel(row, "Lagger Carry Speed"); lagger2Box = mkBox(row, LAGGER_CARRY_SPEED, 50, 56, function(v)
+        if v == v and v > 0 and v < math.huge then
+            LAGGER_CARRY_SPEED = v
+            if VapserVenixCarry and VapserVenixCarry.setLaggerCarrySpeed then pcall(VapserVenixCarry.setLaggerCarrySpeed, VapserVenixCarry, v) end
+            if _G.__VapserApplySpeedNow then pcall(_G.__VapserApplySpeedNow) end
+        end
+    end) end
 
     mkSect(speedPage, "Speed Engine")
     VapserUI.carrySetter = mkToggle(speedPage, "Auto Carry", function(on)
@@ -10006,7 +10038,7 @@ function updateUIFromLoaded()
     if VapserUI.fit then VapserUI.fit() end
     if VapserUI.motorLabel then VapserUI.motorLabel.Text = useVenixCarryEngine and "Carry Boost" or "Direct" end
     if VapserUI.carrySetter then VapserUI.carrySetter(VapserVenixCarry.autoCarryEnabled) end
-    if VapserUI.carrySpeedBox then VapserUI.carrySpeedBox.Text = tostring(VapserVenixCarry.autoCarrySpeed) end
+    if VapserUI.carrySpeedBox then VapserUI.carrySpeedBox.Text = tostring(CS) end
     if VapserUI.effectsSetter then VapserUI.effectsSetter(VapserUI.effects) end
     if VapserUI.lockButtonsSetter then VapserUI.lockButtonsSetter(mobileButtonsLocked) end
 
